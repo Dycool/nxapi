@@ -6,7 +6,6 @@ import { isIP } from 'node:net';
 import { request, type Dispatcher } from 'undici';
 import type { CoralApiInterface } from '../api/coral.js';
 import type { Media } from '../api/coral-types.js';
-import { GAME_ALIAS_GROUPS } from './album-sync-aliases.js';
 
 const MAX_MEDIA_DOWNLOAD_BYTES = 256 * 1024 * 1024;
 const HTTPS_PREFIX = 'https://';
@@ -41,11 +40,7 @@ interface ExistingAlbumIndex {
 }
 
 function lower(value: string) {
-    return value.replace(/[A-Z]/g, character => character.toLowerCase());
-}
-
-function trimAsciiWhitespace(value: string) {
-    return value.replace(/^[\t\n\v\f\r ]+|[\t\n\v\f\r ]+$/g, '');
+    return value.toLowerCase();
 }
 
 function throwIfCancelled(signal?: AbortSignal) {
@@ -55,105 +50,24 @@ function throwIfCancelled(signal?: AbortSignal) {
     throw new Error('Sync cancelled');
 }
 
-function isUnicodeDashOrHyphen(codePoint: number) {
-    return codePoint === 0x2010 ||
-        codePoint === 0x2011 ||
-        codePoint === 0x2012 ||
-        codePoint === 0x2013 ||
-        codePoint === 0x2014 ||
-        codePoint === 0x2015 ||
-        codePoint === 0x2212 ||
-        codePoint === 0xfe58 ||
-        codePoint === 0xfe63 ||
-        codePoint === 0xff0d;
-}
-
-const LATIN_FOLD = new Map<number, string>([
-    ...[0x00c0, 0x00c1, 0x00c2, 0x00c3, 0x00c4, 0x00c5,
-        0x00e0, 0x00e1, 0x00e2, 0x00e3, 0x00e4, 0x00e5].map(cp => [cp, 'a'] as const),
-    [0x00c7, 'c'] as const, [0x00e7, 'c'] as const,
-    ...[0x00c8, 0x00c9, 0x00ca, 0x00cb,
-        0x00e8, 0x00e9, 0x00ea, 0x00eb].map(cp => [cp, 'e'] as const),
-    ...[0x00cc, 0x00cd, 0x00ce, 0x00cf,
-        0x00ec, 0x00ed, 0x00ee, 0x00ef].map(cp => [cp, 'i'] as const),
-    [0x00d1, 'n'] as const, [0x00f1, 'n'] as const,
-    ...[0x00d2, 0x00d3, 0x00d4, 0x00d5, 0x00d6, 0x00d8,
-        0x00f2, 0x00f3, 0x00f4, 0x00f5, 0x00f6, 0x00f8].map(cp => [cp, 'o'] as const),
-    ...[0x00d9, 0x00da, 0x00db, 0x00dc,
-        0x00f9, 0x00fa, 0x00fb, 0x00fc].map(cp => [cp, 'u'] as const),
-    ...[0x00dd, 0x0178, 0x00fd, 0x00ff].map(cp => [cp, 'y'] as const),
-]);
-
 export function normalizeAlbumTitleV1(value: string) {
-    let normalized = '';
-
-    for (const character of value) {
-        const codePoint = character.codePointAt(0)!;
-
-        if (codePoint >= 0x0300 && codePoint <= 0x036f) continue;
-
-        if (codePoint < 0x80) {
-            if ((codePoint >= 0x30 && codePoint <= 0x39) ||
-                (codePoint >= 0x41 && codePoint <= 0x5a) ||
-                (codePoint >= 0x61 && codePoint <= 0x7a)) {
-                normalized += character.toLowerCase();
-            }
-            continue;
-        }
-
-        const folded = LATIN_FOLD.get(codePoint);
-        normalized += folded ?? character;
-    }
-
-    return normalized;
+    return value
+        .normalize('NFKD')
+        .replace(/\p{M}+/gu, '')
+        .toLowerCase()
+        .replace(/[^\p{L}\p{N}]+/gu, '');
 }
 
 export function sanitizeAlbumFolderV1(value: string) {
-    if (!trimAsciiWhitespace(value)) return 'Other';
+    const result = value
+        .normalize('NFKC')
+        .replace(/[\p{Cc}\p{Cf}]/gu, '')
+        .replace(/[\p{Pd}\u2212]/gu, '-')
+        .replace(/[<>:"/\\|?*]/g, '')
+        .replace(/\s+/gu, ' ')
+        .trim()
+        .replace(/[ .]+$/u, '');
 
-    let clean = '';
-
-    for (const character of value) {
-        const codePoint = character.codePointAt(0)!;
-
-        if (codePoint < 0x20) continue;
-
-        if (isUnicodeDashOrHyphen(codePoint)) {
-            clean += '-';
-            continue;
-        }
-
-        if (character === '<' || character === '>' || character === ':' ||
-            character === '"' || character === '/' || character === '\\' ||
-            character === '|' || character === '?' || character === '*' ||
-            codePoint === 0xff1c || codePoint === 0xff1e || codePoint === 0xff1a ||
-            codePoint === 0xff02 || codePoint === 0xff0f || codePoint === 0xff3c ||
-            codePoint === 0xff5c || codePoint === 0xff1f || codePoint === 0xff0a) {
-            continue;
-        }
-
-        clean += character;
-    }
-
-    let result = '';
-    let lastWasSpace = false;
-    for (const character of clean) {
-        if (character === ' ') {
-            if (!lastWasSpace && result) {
-                result += ' ';
-                lastWasSpace = true;
-            }
-        } else {
-            result += character;
-            lastWasSpace = false;
-        }
-    }
-
-    while (result.endsWith(' ') || result.endsWith('.')) {
-        result = result.slice(0, -1);
-    }
-
-    result = trimAsciiWhitespace(result);
     return result || 'Other';
 }
 
@@ -285,7 +199,7 @@ async function pathExists(filename: string) {
 
 export async function resolveAlbumGameFolder(albumDirectory: string, appName: string) {
     const defaultClean = sanitizeAlbumFolderV1(appName);
-    if (!trimAsciiWhitespace(appName) || !(await pathExists(albumDirectory))) return defaultClean;
+    if (!appName.trim() || !(await pathExists(albumDirectory))) return defaultClean;
 
     try {
         const directories: {original: string; normalized: string}[] = [];
@@ -299,25 +213,12 @@ export async function resolveAlbumGameFolder(albumDirectory: string, appName: st
         }
 
         const normalizedAppName = normalizeAlbumTitleV1(appName);
-        let synonyms: readonly string[] = [appName];
 
-        for (const group of GAME_ALIAS_GROUPS) {
-            if (group.some(alias => normalizeAlbumTitleV1(alias) === normalizedAppName)) {
-                synonyms = group;
-                break;
-            }
-        }
+        const exact = directories.find(directory => lower(directory.original) === lower(defaultClean));
+        if (exact) return exact.original;
 
-        for (const synonym of synonyms) {
-            const cleanSynonym = sanitizeAlbumFolderV1(synonym);
-            const normalizedSynonym = normalizeAlbumTitleV1(synonym);
-
-            const exact = directories.find(directory => lower(directory.original) === lower(cleanSynonym));
-            if (exact) return exact.original;
-
-            const normalized = directories.find(directory => directory.normalized === normalizedSynonym);
-            if (normalized) return normalized.original;
-        }
+        const normalized = directories.find(directory => directory.normalized === normalizedAppName);
+        if (normalized) return normalized.original;
 
         if (normalizedAppName) {
             const fuzzy = directories.find(directory =>
@@ -552,9 +453,12 @@ export async function syncAlbum(
 
         validateMediaItemForDownload(item);
 
-        const knownFolder = titleFolders.get(lower(item.applicationId));
-        const gameFolder = knownFolder ??
-            await resolveAlbumGameFolder(root, item.appName);
+        const applicationId = lower(item.applicationId);
+        let gameFolder = applicationId ? titleFolders.get(applicationId) : undefined;
+        if (!gameFolder) {
+            gameFolder = await resolveAlbumGameFolder(root, item.appName);
+            if (applicationId) titleFolders.set(applicationId, gameFolder);
+        }
 
         const destination = path.join(root, gameFolder, filename);
         await fs.mkdir(path.dirname(destination), {recursive: true});

@@ -135,12 +135,10 @@ export default class AlbumSyncManager {
 
         const saved = await this.app.store.storage.getItem(SETTINGS_KEY) as
             (Partial<AlbumSyncSettings> & {last_sync?: string}) | undefined;
-        const destination = saved?.destination || await defaultAlbumFolder(
-            process.platform === 'win32' ? {
-                picturesDirectory: electronApp.getPath('pictures'),
-                videosDirectory: electronApp.getPath('videos'),
-            } : {},
-        );
+        const destination = saved?.destination || await defaultAlbumFolder({
+            picturesDirectory: electronApp.getPath('pictures'),
+            videosDirectory: electronApp.getPath('videos'),
+        });
 
         let defaultUserId: string | null = null;
         if (!saved?.user_id) {
