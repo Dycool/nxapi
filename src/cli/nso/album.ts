@@ -1,3 +1,4 @@
+import * as os from 'node:os';
 import * as path from 'node:path';
 import Table from '../../util/table.js';
 import type { Arguments as ParentArguments } from './index.js';
@@ -9,11 +10,18 @@ import { fetchLatestCapture, syncAlbum } from '../../common/album-sync.js';
 
 const debug = createDebug('cli:nso:album');
 
-export const command = 'album';
+export const command = 'album [action] [directory]';
 export const desc = 'List or sync Nintendo Switch 2 album';
 
 export function builder(yargs: Argv<ParentArguments>) {
-    return yargs.option('user', {
+    return yargs.positional('action', {
+        describe: 'Album action to perform',
+        choices: ['sync', 'latest'],
+        type: 'string',
+    }).positional('directory', {
+        describe: 'Directory to write captures to',
+        type: 'string',
+    }).option('user', {
         describe: 'Nintendo Account ID',
         type: 'string',
     }).option('token', {
@@ -24,15 +32,6 @@ export function builder(yargs: Argv<ParentArguments>) {
         type: 'boolean',
     }).option('json-pretty-print', {
         describe: 'Output pretty-printed JSON',
-        type: 'boolean',
-    }).option('sync', {
-        describe: 'Sync missing captures to the local Nintendo Switch Album folder',
-        type: 'boolean',
-    }).option('destination', {
-        describe: 'Album sync destination',
-        type: 'string',
-    }).option('latest', {
-        describe: 'Download the latest capture and print its local path',
         type: 'boolean',
     });
 }
@@ -47,9 +46,9 @@ export async function handler(argv: ArgumentsCamelCase<Arguments>) {
         await storage.getItem('NintendoAccountToken.' + usernsid);
     const { nso, data } = await getToken(storage, token, argv.zncProxyUrl);
 
-    if (argv.sync) {
+    if (argv.action === 'sync') {
         const result = await syncAlbum(nso, {
-            destination: argv.destination,
+            destination: argv.directory,
             onDownload: media => {
                 console.warn('Downloading ' + media.appName + ' ' + media.type + ' captured ' +
                     new Date((media.capturedAt || media.uploadedAt) * 1000).toISOString());
@@ -61,9 +60,9 @@ export async function handler(argv: ArgumentsCamelCase<Arguments>) {
         return;
     }
 
-    if (argv.latest) {
+    if (argv.action === 'latest') {
         const filename = await fetchLatestCapture(nso, {
-            cacheDirectory: path.join(argv.dataPath, 'album-sync-cache'),
+            destinationDirectory: argv.directory ?? path.join(os.homedir(), 'Downloads'),
         });
         console.log(filename);
         return;

@@ -30,7 +30,8 @@ export interface AlbumSyncOptions {
 }
 
 export interface LatestCaptureOptions {
-    cacheDirectory: string;
+    cacheDirectory?: string;
+    destinationDirectory?: string;
     signal?: AbortSignal;
     onDownloadStarted?: (type: 'image' | 'video') => void | Promise<void>;
 }
@@ -530,12 +531,19 @@ export async function fetchLatestCapture(
     validateMediaItemForDownload(latest);
 
     const isVideo = latest.type === MediaType.VIDEO;
+    const directory = options.destinationDirectory ?? options.cacheDirectory;
+    if (!directory) throw new Error('Latest capture destination directory is required');
+
+    await fs.mkdir(directory, {recursive: true});
+    const destination = path.join(directory, options.destinationDirectory ?
+        mediaFilename(latest) : (isVideo ? 'video.mp4' : 'image.jpg'));
+
+    // User-facing downloads use the same stable capture name as a full sync.
+    // Existing files are left intact, matching nxapi's other dump commands.
+    if (options.destinationDirectory && await pathExists(destination)) return destination;
+
     await options.onDownloadStarted?.(isVideo ? 'video' : 'image');
 
-    const extension = isVideo ? 'mp4' : 'jpg';
-    await fs.mkdir(options.cacheDirectory, {recursive: true});
-
-    const destination = path.join(options.cacheDirectory, (isVideo ? 'video.' : 'image.') + extension);
     const body = await downloadMedia(latest, options.signal);
     await writeMediaAtomically(destination, body, options.signal);
 
