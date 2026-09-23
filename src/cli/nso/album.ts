@@ -1,10 +1,13 @@
 import * as path from 'node:path';
 import Table from '../../util/table.js';
 import type { Arguments as ParentArguments } from './index.js';
+import createDebug from '../../util/debug.js';
 import { ArgumentsCamelCase, Argv, YargsArguments } from '../../util/yargs.js';
 import { initStorage } from '../../util/storage.js';
-import { getToken } from '../../common/auth/coral.js';
+import { getToken, Login } from '../../common/auth/coral.js';
 import { fetchLatestCapture, syncAlbum } from '../../common/album-sync.js';
+
+const debug = createDebug('cli:nso:album');
 
 export const command = 'album';
 export const desc = 'List or sync Nintendo Switch 2 album';
@@ -42,7 +45,7 @@ export async function handler(argv: ArgumentsCamelCase<Arguments>) {
     const usernsid = argv.user ?? await storage.getItem('SelectedUser');
     const token: string = argv.token ||
         await storage.getItem('NintendoAccountToken.' + usernsid);
-    const {nso} = await getToken(storage, token, argv.zncProxyUrl);
+    const { nso, data } = await getToken(storage, token, argv.zncProxyUrl);
 
     if (argv.sync) {
         const result = await syncAlbum(nso, {
@@ -67,12 +70,25 @@ export async function handler(argv: ArgumentsCamelCase<Arguments>) {
     }
 
     console.warn('Listing album items');
-    const media = await nso.getMedia();
+
+    const [media, [friends, chats, webservices, activeevent, announcements, current_user]] = await Promise.all([
+        nso.getMedia(),
+
+        data[Login] || true ? Promise.all([
+            nso.getFriendList(),
+            nso.getChats(),
+            nso.getWebServices(),
+            nso.getActiveEvent(),
+            nso.getAnnouncements(),
+            nso.getCurrentUser(),
+        ]) : [],
+    ]);
 
     if (argv.jsonPrettyPrint) {
         console.log(JSON.stringify(media, null, 4));
         return;
     }
+
     if (argv.json) {
         console.log(JSON.stringify(media));
         return;
