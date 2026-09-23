@@ -105,6 +105,7 @@ export default class AlbumSyncManager {
     };
 
     async init() {
+        await this.app.i18n.loadNamespaces('notifications');
         const settings = await this.getSettings();
         this.accountToken = await this.selectedAccountToken();
         this.status.last_sync = settings.last_sync || 'Never';
@@ -183,17 +184,18 @@ export default class AlbumSyncManager {
             void this.restartAutoSyncAfterAccountChange(true, false);
 
             if (this.settings.notifications) {
-                this.notify('Album Sync',
-                    this.settings.interval_minutes === 60 ?
-                        'Auto-sync enabled (refreshes every hour).' :
-                        'Auto-sync enabled (refreshes every ' + this.settings.interval_minutes + ' minutes).');
+                const t = this.app.i18n.getFixedT(null, 'notifications');
+                this.notify(this.settings.interval_minutes === 60 ?
+                    t('album_sync.auto_sync_enabled_hourly')! :
+                    t('album_sync.auto_sync_enabled_minutes', {count: this.settings.interval_minutes})!);
             }
         } else if (scheduleChanged) {
             await this.scheduleNext();
         }
 
         if (enabledChanged && !this.settings.enabled && this.settings.notifications) {
-            this.notify('Album Sync', 'Auto-sync disabled.');
+            const t = this.app.i18n.getFixedT(null, 'notifications');
+            this.notify(t('album_sync.auto_sync_disabled')!);
         }
 
         return {...this.settings};
@@ -336,12 +338,11 @@ export default class AlbumSyncManager {
 
                 if (this.settings.notifications) {
                     if (result.newDownloads > 0) {
-                        this.notify('Album Sync',
-                            'Synced ' + result.newDownloads + (result.newDownloads === 1 ?
-                                ' new capture to your album folder!' :
-                                ' new captures to your album folder!'));
+                        const t = this.app.i18n.getFixedT(null, 'notifications');
+                        this.notify(t('album_sync.synced', {count: result.newDownloads})!);
                     } else if (!background) {
-                        this.notify('Album Sync', 'Album is up to date. No new captures found.');
+                        const t = this.app.i18n.getFixedT(null, 'notifications');
+                        this.notify(t('album_sync.up_to_date')!);
                     }
                 }
 
@@ -356,7 +357,7 @@ export default class AlbumSyncManager {
                 debug('Album sync failed', err);
 
                 const settings = await this.getSettings();
-                if (settings.notifications) this.notify('Album Sync', message);
+                if (settings.notifications) this.notify(message);
                 throw err;
             } finally {
                 this.abortController = null;
@@ -398,7 +399,8 @@ export default class AlbumSyncManager {
                         this.status.status = 'Downloading ' + type + '…';
                         this.emitState();
                         if (settings.notifications && type === 'video') {
-                            this.notify('Album Sync', 'Downloading video…');
+                            const t = this.app.i18n.getFixedT(null, 'notifications');
+                            this.notify(t('album_sync.downloading_video')!);
                         }
                     },
                 });
@@ -411,7 +413,9 @@ export default class AlbumSyncManager {
                 const label = mediaType === 'video' ? 'Video' : 'Image';
                 this.status.status = label + ' copied to clipboard';
                 if (settings.notifications) {
-                    this.notify('Album Sync', label + ' copied to the clipboard.');
+                    const t = this.app.i18n.getFixedT(null, 'notifications');
+                    this.notify(t(mediaType === 'video' ?
+                        'album_sync.video_copied' : 'album_sync.image_copied')!);
                 }
 
                 return filename;
@@ -425,7 +429,7 @@ export default class AlbumSyncManager {
                 debug('Copy latest capture failed', err);
 
                 const settings = await this.getSettings();
-                if (settings.notifications) this.notify('Album Sync', message);
+                if (settings.notifications) this.notify(message);
                 throw err;
             } finally {
                 this.captureAbortController = null;
@@ -468,9 +472,10 @@ export default class AlbumSyncManager {
         this.abortController?.abort(new Error('Sync cancelled'));
     }
 
-    private notify(title: string, body: string) {
+    private notify(body: string) {
         if (!Notification.isSupported()) return;
-        new Notification({title, body}).show();
+        const t = this.app.i18n.getFixedT(null, 'notifications');
+        new Notification({title: t('album_sync.title')!, body}).show();
     }
 
     private emitState() {

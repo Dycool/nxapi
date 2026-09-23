@@ -130,23 +130,23 @@ export default class MenuApp {
         if (album_settings.feature_enabled) {
             menu.append(new MenuItem({type: 'separator'}));
             menu.append(new MenuItem({
-                label: 'Album Sync',
+                label: t('album_sync.heading')!,
                 submenu: [
                     ...(album_status.status && album_status.status !== 'Ready' ? [
                         {label: album_status.status, enabled: false},
                     ] : []),
-                    {label: 'Last sync: ' + album_status.last_sync, enabled: false},
+                    {label: t('album_sync.last_sync', {last_sync: album_status.last_sync})!, enabled: false},
                     {type: 'separator'},
                     {
-                        label: 'Sync Now',
+                        label: t('album_sync.sync_now')!,
                         enabled: album_account_signed_in && !album_status.busy,
                         click: () => void this.app.albumSync.syncNow(false)
                             .catch(err => debug('Album sync failed', err)),
                     },
                     {
                         label: album_settings.interval_minutes === 60 ?
-                            'Auto-Sync (Hourly)' :
-                            'Auto-Sync (Every ' + album_settings.interval_minutes + ' min)',
+                            t('album_sync.auto_sync_hourly')! :
+                            t('album_sync.auto_sync_minutes', {count: album_settings.interval_minutes})!,
                         type: 'checkbox',
                         checked: album_settings.enabled,
                         enabled: album_account_signed_in,
@@ -154,13 +154,13 @@ export default class MenuApp {
                             .catch(err => debug('Updating album sync failed', err)),
                     },
                     {
-                        label: 'Copy Last Capture',
+                        label: t('album_sync.copy_last_capture')!,
                         enabled: album_account_signed_in && !album_status.copying,
                         click: () => void this.app.albumSync.copyLatestCapture()
                             .catch(err => debug('Copy latest capture failed', err)),
                     },
                     {
-                        label: 'Notifications',
+                        label: t('album_sync.notifications')!,
                         type: 'checkbox',
                         checked: album_settings.notifications,
                         click: () => void this.app.albumSync.toggleNotifications()
@@ -168,12 +168,12 @@ export default class MenuApp {
                     },
                     {type: 'separator'},
                     {
-                        label: 'Choose Album Folder…',
+                        label: t('album_sync.choose_folder')!,
                         click: () => void this.app.albumSync.chooseDestination()
                             .catch(err => debug('Choosing album folder failed', err)),
                     },
                     {
-                        label: 'Open Album Folder',
+                        label: t('album_sync.open_folder')!,
                         click: () => void this.app.albumSync.openDestination()
                             .catch(err => debug('Opening album folder failed', err)),
                     },

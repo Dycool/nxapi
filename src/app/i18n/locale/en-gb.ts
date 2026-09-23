@@ -35,6 +35,19 @@ export const menu_app = {
 
     add_account: 'Add account',
 
+    album_sync: {
+        heading: 'Album Sync',
+        last_sync: 'Last sync: {{last_sync}}',
+        sync_now: 'Sync Now',
+        auto_sync_hourly: 'Auto-Sync (Hourly)',
+        auto_sync_minutes_one: 'Auto-Sync (Every {{count}} min)',
+        auto_sync_minutes_other: 'Auto-Sync (Every {{count}} min)',
+        copy_last_capture: 'Copy Last Capture',
+        notifications: 'Notifications',
+        choose_folder: 'Choose Album Folder…',
+        open_folder: 'Open Album Folder',
+    },
+
     show_main_window: 'Show main window',
     preferences: 'Preferences',
     quit: 'Quit',
@@ -92,6 +105,20 @@ export const menus = {
 export const notifications = {
     playing: 'Playing {{name}}',
     offline: 'Offline',
+
+    album_sync: {
+        title: 'Album Sync',
+        auto_sync_enabled_hourly: 'Auto-sync enabled (refreshes every hour).',
+        auto_sync_enabled_minutes_one: 'Auto-sync enabled (refreshes every {{count}} minute).',
+        auto_sync_enabled_minutes_other: 'Auto-sync enabled (refreshes every {{count}} minutes).',
+        auto_sync_disabled: 'Auto-sync disabled.',
+        synced_one: 'Synced {{count}} new capture to your album folder!',
+        synced_other: 'Synced {{count}} new captures to your album folder!',
+        up_to_date: 'Album is up to date. No new captures found.',
+        downloading_video: 'Downloading video…',
+        image_copied: 'Image copied to the clipboard.',
+        video_copied: 'Video copied to the clipboard.',
+    },
 };
 
 export const handle_uri = {
