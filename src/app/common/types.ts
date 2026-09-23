@@ -58,3 +58,21 @@ export interface LoginItem {
     startup_hidden: boolean;
 }
 export type LoginItemOptions = Omit<LoginItem, 'supported'>;
+
+
+export interface AlbumSyncSettings {
+    feature_enabled: boolean;
+    enabled: boolean;
+    notifications: boolean;
+    interval_minutes: number;
+    user_id: string | null;
+    destination: string;
+    last_sync: string;
+}
+
+export interface AlbumSyncStatus {
+    busy: boolean;
+    copying: boolean;
+    status: string;
+    last_sync: string;
+}

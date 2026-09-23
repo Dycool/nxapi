@@ -31,6 +31,8 @@ function _Preferences(props: {
     const [login_item, ,, forceRefreshLoginItem] = useAsync(useCallback(() => ipc.getLoginItemSettings(), [ipc]));
 
     const [show_error_alerts, , show_error_alerts_state, forceRefreshErrorAlerts] = useAsync(useCallback(() => ipc.getShowErrorAlerts(), [ipc]));
+    const [album_sync_settings, , album_sync_settings_state, forceRefreshAlbumSyncSettings] =
+        useAsync(useCallback(() => ipc.getAlbumSyncSettings(), [ipc]));
 
     const setOpenAtLogin = useCallback(async (open_at_login: boolean | 'mixed') => {
         await ipc.setLoginItemSettings({...login_item!, startup_enabled: !!open_at_login});
@@ -44,6 +46,21 @@ function _Preferences(props: {
     const setShowErrorAlerts = useCallback(async (show_error_alerts: boolean | 'mixed') => {
         await ipc.setShowErrorAlerts(!!show_error_alerts);
         forceRefreshErrorAlerts();
+    }, [ipc]);
+
+    const setAlbumSyncEnabled = useCallback(async (enabled: boolean | 'mixed') => {
+        await ipc.setAlbumSyncSettings({feature_enabled: !!enabled});
+        forceRefreshAlbumSyncSettings();
+    }, [ipc]);
+
+    const setAlbumSyncUser = useCallback(async (user_id: string) => {
+        await ipc.setAlbumSyncSettings({user_id});
+        forceRefreshAlbumSyncSettings();
+    }, [ipc]);
+
+    const chooseAlbumFolder = useCallback(async () => {
+        await ipc.chooseAlbumSyncFolder();
+        forceRefreshAlbumSyncSettings();
     }, [ipc]);
 
     const [discord_users, discord_users_error, discord_users_state, forceRefreshDiscordUsers] =
@@ -105,11 +122,12 @@ function _Preferences(props: {
     useEventListener(events, 'window:refresh', () => (
         forceRefreshAccounts(), forceRefreshLoginItem(),
         forceRefreshDiscordUsers(), forceRefreshDiscordOptions(),
-        forceRefreshErrorAlerts()
+        forceRefreshErrorAlerts(), forceRefreshAlbumSyncSettings()
     ), []);
 
     if (!users ||
         !login_item ||
+        !album_sync_settings ||
         !has_ever_loaded_discord_options ||
         discord_presence_source_state !== RequestState.LOADED ||
         !ready
@@ -306,6 +324,63 @@ function _Preferences(props: {
                     </TouchableOpacity>
                 </View>
                 <Text style={[styles.help, theme.text]}>{t('miscellaneous.show_error_alerts_help')}</Text>
+            </View>
+        </View>
+
+        <View style={styles.section}>
+            <View style={styles.sectionLeft}>
+                <Text style={[styles.label, theme.text]}>Album Sync</Text>
+            </View>
+            <View style={styles.sectionRight}>
+                <View style={styles.checkboxContainer}>
+                    <CheckBox
+                        value={album_sync_settings.feature_enabled}
+                        onValueChange={setAlbumSyncEnabled}
+                        disabled={album_sync_settings_state === RequestState.LOADING}
+                        color={'#' + (accent_colour ?? DEFAULT_ACCENT_COLOUR)}
+                        style={styles.checkbox}
+                    />
+                    <TouchableOpacity
+                        disabled={album_sync_settings_state === RequestState.LOADING}
+                        style={styles.checkboxLabel}
+                        onPress={() => setAlbumSyncEnabled(!album_sync_settings.feature_enabled)}
+                    >
+                        <Text style={[styles.checkboxLabelText, theme.text]}>Enable Album Sync</Text>
+                    </TouchableOpacity>
+                </View>
+
+                <View style={!album_sync_settings.feature_enabled ? styles.disabled : null}>
+                    <Text style={[styles.header, theme.text]}>Nintendo Account</Text>
+                    <Picker<string>
+                        selectedValue={album_sync_settings.user_id ?? ''}
+                        onValueChange={setAlbumSyncUser}
+                        style={[styles.picker, theme.picker]}
+                        enabled={album_sync_settings.feature_enabled &&
+                            album_sync_settings_state !== RequestState.LOADING}
+                    >
+                        {!users.some(user => !!user.nso) ?
+                            <Picker.Item key="" label="No Nintendo Switch Online accounts" value="" /> :
+                            users.filter(user => !!user.nso).map(user =>
+                                <Picker.Item
+                                    key={user.user.id}
+                                    value={user.user.id}
+                                    label={user.nso!.nsoAccount.user.name +
+                                        (user.user.nickname !== user.nso!.nsoAccount.user.name ?
+                                            ' (' + user.user.nickname + ')' : '')}
+                                />
+                            )
+                        }
+                    </Picker>
+                </View>
+                <View>
+                    <Text style={[styles.header, theme.text]}>Album Folder</Text>
+                    <Text selectable style={[styles.help, theme.text]}>{album_sync_settings.destination}</Text>
+                    <View style={styles.button}>
+                        <Button title="Choose Album Folder"
+                            onPress={chooseAlbumFolder}
+                            color={'#' + (accent_colour ?? DEFAULT_ACCENT_COLOUR)} />
+                    </View>
+                </View>
             </View>
         </View>
     </View>;

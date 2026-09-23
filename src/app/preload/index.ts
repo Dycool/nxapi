@@ -2,7 +2,7 @@ import { contextBridge, ipcRenderer, SharingItem } from 'electron';
 import { EventEmitter } from 'node:events';
 import createDebug from 'debug';
 import type { User } from 'discord-rpc';
-import type { DiscordPresenceConfiguration, DiscordPresenceSource, DiscordStatus, LoginItem, LoginItemOptions, WindowConfiguration } from '../common/types.js';
+import type { AlbumSyncSettings, AlbumSyncStatus, DiscordPresenceConfiguration, DiscordPresenceSource, DiscordStatus, LoginItem, LoginItemOptions, WindowConfiguration } from '../common/types.js';
 import type { SavedToken } from '../../common/auth/coral.js';
 import type { SavedMoonToken } from '../../common/auth/moon.js';
 import type { UpdateCacheData } from '../../common/update.js';
@@ -52,6 +52,14 @@ const ipc = {
 
     getShowErrorAlerts: () => inv<boolean>('preferences:getshowerroralerts'),
     setShowErrorAlerts: (show: boolean) => inv('preferences:setshowerroralerts', show),
+
+    getAlbumSyncSettings: () => inv<AlbumSyncSettings>('album-sync:settings'),
+    setAlbumSyncSettings: (settings: Partial<AlbumSyncSettings>) => inv<AlbumSyncSettings>('album-sync:setsettings', settings),
+    getAlbumSyncStatus: () => inv<AlbumSyncStatus>('album-sync:status'),
+    syncAlbumNow: () => inv('album-sync:sync'),
+    copyLatestAlbumCapture: () => inv<string>('album-sync:copy-latest'),
+    chooseAlbumSyncFolder: () => inv<string>('album-sync:choose-folder'),
+    openAlbumSyncFolder: () => inv('album-sync:open-folder'),
 
     getUpdateData: () => inv<UpdateCacheData | null>('update:get'),
     checkUpdates: () => inv<UpdateCacheData | null>('update:check'),
@@ -126,6 +134,7 @@ ipcRenderer.on('nxapi:discord:shouldrefresh', () => events.emit('update-discord-
 ipcRenderer.on('nxapi:discord:presence', (e, p: DiscordPresence) => events.emit('update-discord-presence', p));
 ipcRenderer.on('nxapi:discord:user', (e, u: User) => events.emit('update-discord-user', u));
 ipcRenderer.on('nxapi:discord:status', (e, s: DiscordStatus | null) => events.emit('update-discord-status', s));
+ipcRenderer.on('nxapi:album-sync:status', (e, s: AlbumSyncStatus) => events.emit('update-album-sync', s));
 
 let language: string | undefined = invSync('app:language');
 ipcRenderer.on('nxapi:app:update-language', (event, l: string) => {

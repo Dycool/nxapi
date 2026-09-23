@@ -6,6 +6,7 @@ import { setGlobalDispatcher } from 'undici';
 import * as persist from 'node-persist';
 import { i18n } from 'i18next';
 import MenuApp from './menu.js';
+import AlbumSyncManager from '../album-sync/index.js';
 import { handleOpenWebServiceUri } from './webservices.js';
 import { EmbeddedPresenceMonitor, PresenceMonitorManager } from './monitor.js';
 import { createModalWindow, createWindow } from './windows.js';
@@ -70,11 +71,13 @@ export class App {
     readonly monitors: PresenceMonitorManager;
     readonly updater = new Updater();
     readonly statusupdates = new StatusUpdateMonitor();
+    readonly albumSync: AlbumSyncManager;
     menu: MenuApp | null = null;
 
     constructor(storage: persist.LocalStorage, readonly i18n: i18n) {
         this.store = new Store(this, storage);
         this.monitors = new PresenceMonitorManager(this);
+        this.albumSync = new AlbumSyncManager(this);
     }
 
     main_window: BrowserWindow | null = null;
@@ -227,6 +230,7 @@ export async function init() {
 
     const menu = new MenuApp(appinstance);
     appinstance.menu = menu;
+    await appinstance.albumSync.init();
 
     i18n.on('languageChanged', language => {
         debug('Language changed', language);
@@ -267,6 +271,8 @@ export async function init() {
         // Show the dock icon when any windows are open
         app.dock?.show();
     });
+
+    app.on('before-quit', () => appinstance.albumSync.stop());
 
     app.on('window-all-closed', () => {
         // Listen to the window-all-closed event to prevent Electron quitting the app

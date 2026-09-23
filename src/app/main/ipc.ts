@@ -8,7 +8,7 @@ import { createModalWindow, getWindowConfiguration, setWindowHeight } from './wi
 import { askAddNsoAccount, askAddPctlAccount } from './na-auth.js';
 import { App } from './index.js';
 import { EmbeddedPresenceMonitor } from './monitor.js';
-import { DiscordPresenceConfiguration, DiscordPresenceSource, DiscordStatus, LoginItemOptions, WindowType } from '../common/types.js';
+import { AlbumSyncSettings, AlbumSyncStatus, DiscordPresenceConfiguration, DiscordPresenceSource, DiscordStatus, LoginItemOptions, WindowType } from '../common/types.js';
 import { CurrentUser, CurrentUserFriendCodeLink, Friend, Game, PresencePlatform, PresenceState, WebService } from '../../api/coral-types.js';
 import { NintendoAccountSessionTokenJwtPayload, NintendoAccountUser } from '../../api/na.js';
 import { DiscordPresence } from '../../discord/types.js';
@@ -92,6 +92,15 @@ export function setupIpc(appinstance: App, ipcMain: IpcMain) {
 
     handle('preferences:getshowerroralerts', () => storage.getItem('ShowErrorAlertsPreference').then(s => s ?? false));
     handle('preferences:setshowerroralerts', (e, show: boolean) => storage.setItem('ShowErrorAlertsPreference', show));
+
+    handle('album-sync:settings', () => appinstance.albumSync.getSettings());
+    handle('album-sync:setsettings', (e, settings: Partial<AlbumSyncSettings>) =>
+        appinstance.albumSync.setSettings(settings));
+    handle('album-sync:status', () => ({...appinstance.albumSync.status}));
+    handle('album-sync:sync', () => appinstance.albumSync.syncNow(false));
+    handle('album-sync:copy-latest', () => appinstance.albumSync.copyLatestCapture());
+    handle('album-sync:choose-folder', () => appinstance.albumSync.chooseDestination());
+    handle('album-sync:open-folder', () => appinstance.albumSync.openDestination());
 
     handle('update:get', () => appinstance.updater.cache ?? appinstance.updater.check());
     handle('update:check', () => appinstance.updater.check());
@@ -247,6 +256,7 @@ export function setupIpc(appinstance: App, ipcMain: IpcMain) {
     store.on('update-discord-presence', (p: DiscordPresence) => sendToAllWindows('nxapi:discord:presence', p));
     store.on('update-discord-user', (u: User) => sendToAllWindows('nxapi:discord:user', u));
     store.on('update-discord-status', (s: DiscordStatus | null) => sendToAllWindows('nxapi:discord:status', s));
+    store.on('update-album-sync', (s: AlbumSyncStatus) => sendToAllWindows('nxapi:album-sync:status', s));
 }
 
 export function sendToAllWindows(channel: string, ...args: any[]) {

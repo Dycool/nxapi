@@ -34,6 +34,7 @@ export default class MenuApp {
         this.tray.setToolTip('nxapi');
 
         app.store.on('update-nintendo-accounts', () => this.updateMenu());
+        app.store.on('update-album-sync', () => this.updateMenu());
         app.store.on('update-cached-web-services', (language: string, cache: CachedWebServicesList) => {
             this.webservices.set(language, cache.webservices);
             this.updateMenu();
@@ -50,6 +51,11 @@ export default class MenuApp {
         const menu = new Menu();
 
         const ids = await this.app.store.storage.getItem('NintendoAccountIds') as string[] | undefined;
+        const album_settings = await this.app.albumSync.getSettings();
+        const album_status = this.app.albumSync.status;
+        const album_account_signed_in = !!album_settings.user_id &&
+            !!ids?.includes(album_settings.user_id) &&
+            !!await this.app.store.storage.getItem('NintendoAccountToken.' + album_settings.user_id);
         menu.append(new MenuItem({label: t('coral_heading')!, enabled: false}));
 
         const discord_presence_monitor = this.getActiveDiscordPresenceMonitor();
@@ -120,6 +126,62 @@ export default class MenuApp {
         }
 
         menu.append(new MenuItem({label: t('add_account')!, click: this.addPctlAccount}));
+
+        if (album_settings.feature_enabled) {
+            menu.append(new MenuItem({type: 'separator'}));
+            menu.append(new MenuItem({
+                label: 'Album Sync',
+                submenu: [
+                    ...(album_status.status && album_status.status !== 'Ready' ? [
+                        {label: album_status.status, enabled: false},
+                    ] : []),
+                    {label: 'Last sync: ' + album_status.last_sync, enabled: false},
+                    {type: 'separator'},
+                    {
+                        label: 'Sync Now',
+                        enabled: album_account_signed_in && !album_status.busy,
+                        click: () => void this.app.albumSync.syncNow(false)
+                            .catch(err => debug('Album sync failed', err)),
+                    },
+                    {
+                        label: album_settings.interval_minutes === 60 ?
+                            'Auto-Sync (Hourly)' :
+                            'Auto-Sync (Every ' + album_settings.interval_minutes + ' min)',
+                        type: 'checkbox',
+                        checked: album_settings.enabled,
+                        enabled: album_account_signed_in,
+                        click: () => void this.app.albumSync.toggleEnabled()
+                            .catch(err => debug('Updating album sync failed', err)),
+                    },
+                    {
+                        label: 'Copy Last Capture',
+                        enabled: album_account_signed_in && !album_status.copying,
+                        click: () => void this.app.albumSync.copyLatestCapture()
+                            .catch(err => debug('Copy latest capture failed', err)),
+                    },
+                    {
+                        label: 'Notifications',
+                        type: 'checkbox',
+                        checked: album_settings.notifications,
+                        click: () => void this.app.albumSync.toggleNotifications()
+                            .catch(err => debug('Updating album notifications failed', err)),
+                    },
+                    {type: 'separator'},
+                    {
+                        label: 'Choose Album Folder…',
+                        click: () => void this.app.albumSync.chooseDestination()
+                            .catch(err => debug('Choosing album folder failed', err)),
+                    },
+                    {
+                        label: 'Open Album Folder',
+                        click: () => void this.app.albumSync.openDestination()
+                            .catch(err => debug('Opening album folder failed', err)),
+                    },
+                ],
+            }));
+
+
+        }
 
         menu.append(new MenuItem({type: 'separator'}));
         menu.append(new MenuItem({label: t('show_main_window')!, click: () => this.app.showMainWindow()}));
