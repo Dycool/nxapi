@@ -48,6 +48,8 @@ function _Preferences(props: {
         forceRefreshErrorAlerts();
     }, [ipc]);
 
+    useEventListener(events, 'update-album-sync', forceRefreshAlbumSyncSettings, []);
+
     const setAlbumSyncEnabled = useCallback(async (enabled: boolean | 'mixed') => {
         await ipc.setAlbumSyncSettings({feature_enabled: !!enabled});
         forceRefreshAlbumSyncSettings();
@@ -358,9 +360,13 @@ function _Preferences(props: {
                         enabled={album_sync_settings.feature_enabled &&
                             album_sync_settings_state !== RequestState.LOADING}
                     >
-                        {!users.some(user => !!user.nso) ?
-                            <Picker.Item key="" label={t('album_sync.no_accounts')!} value="" /> :
-                            users.filter(user => !!user.nso).map(user =>
+                        {!users.some(user => !!user.nso) ? [
+                            <Picker.Item key="" label={t('album_sync.no_accounts')!} value="" />,
+                        ] : [
+                            ...(!users.some(user => !!user.nso && user.user.id === album_sync_settings.user_id) ? [
+                                <Picker.Item key="" label={t('album_sync.choose_account')!} value="" />,
+                            ] : []),
+                            ...users.filter(user => !!user.nso).map(user =>
                                 <Picker.Item
                                     key={user.user.id}
                                     value={user.user.id}
@@ -368,8 +374,8 @@ function _Preferences(props: {
                                         (user.user.nickname !== user.nso!.nsoAccount.user.name ?
                                             ' (' + user.user.nickname + ')' : '')}
                                 />
-                            )
-                        }
+                            ),
+                        ]}
                     </Picker>
                 </View>
                 <View>

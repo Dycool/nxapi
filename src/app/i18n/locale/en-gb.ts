@@ -332,6 +332,7 @@ export const preferences_window = {
         enable: 'Enable Album Sync',
         nintendo_account: 'Nintendo Account',
         no_accounts: 'No Nintendo Switch Online accounts',
+        choose_account: 'Choose a Nintendo Account',
         album_folder: 'Album Folder',
         choose_folder: 'Choose Album Folder',
     },

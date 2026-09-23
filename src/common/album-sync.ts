@@ -2,6 +2,7 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { isIP } from 'node:net';
 import { request, type Dispatcher } from 'undici';
 import type { CoralApiInterface } from '../api/coral.js';
@@ -36,7 +37,9 @@ export interface LatestCaptureOptions {
 
 interface ExistingAlbumIndex {
     filenamesAndPrefixes: Set<string>;
-    folderByTimestampPrefix: Map<string, string>;
+    folderByTimestampPrefix: Map<string, string | null>;
+    folderByFilename: Map<string, string>;
+    legacyFiles: Map<string, string[]>;
 }
 
 function lower(value: string) {
@@ -84,8 +87,20 @@ export function captureTimestampPrefix(timestamp: number) {
         '00';
 }
 
+function mediaFilename(item: Media) {
+    const prefix = captureTimestampPrefix(mediaTimestamp(item));
+    const extension = item.type === MediaType.VIDEO ? 'mp4' : 'jpg';
+    // Include media identity: timestamps alone can collide, even across types.
+    const identity = createHash('sha256').update(JSON.stringify([
+        item.applicationId, item.id, item.type, item.acdIndex,
+    ])).digest('hex');
+    return prefix + '_' + identity + '_c.' + extension;
+}
+
 function prefixFromExistingFilename(filename: string) {
     let prefix = path.parse(filename).name;
+    const identified = prefix.match(/^(\d{16})_[a-f0-9]{64}_c$/i);
+    if (identified) return identified[1];
     if (prefix.length > 2 && prefix.endsWith('_c')) {
         prefix = prefix.slice(0, -2);
     } else if (prefix.length > 3 && prefix.endsWith('-00')) {
@@ -123,6 +138,8 @@ async function indexExistingAlbum(root: string, signal?: AbortSignal): Promise<E
     const index: ExistingAlbumIndex = {
         filenamesAndPrefixes: new Set(),
         folderByTimestampPrefix: new Map(),
+        folderByFilename: new Map(),
+        legacyFiles: new Map(),
     };
 
     for await (const filename of walkFiles(root, signal)) {
@@ -139,11 +156,21 @@ async function indexExistingAlbum(root: string, signal?: AbortSignal): Promise<E
         if (!stat.size) continue;
 
         const prefix = prefixFromExistingFilename(filename);
+        if (!/^\d{16}_[a-f0-9]{64}_c$/i.test(path.parse(filename).name)) {
+            const key = lower(prefix + path.extname(filename));
+            const files = index.legacyFiles.get(key) ?? [];
+            files.push(filename);
+            index.legacyFiles.set(key, files);
+        }
         index.filenamesAndPrefixes.add(basenameLower);
         index.filenamesAndPrefixes.add(lower(prefix));
 
+        const folder = path.basename(path.dirname(filename));
+        index.folderByFilename.set(basenameLower, folder);
         if (!index.folderByTimestampPrefix.has(lower(prefix))) {
-            index.folderByTimestampPrefix.set(lower(prefix), path.basename(path.dirname(filename)));
+            index.folderByTimestampPrefix.set(lower(prefix), folder);
+        } else if (index.folderByTimestampPrefix.get(lower(prefix)) !== folder) {
+            index.folderByTimestampPrefix.set(lower(prefix), null);
         }
     }
 
@@ -152,12 +179,21 @@ async function indexExistingAlbum(root: string, signal?: AbortSignal): Promise<E
 
 function learnTitleFolders(media: readonly Media[], existing: ExistingAlbumIndex) {
     const folders = new Map<string, string>();
+    const applicationsByPrefix = new Map<string, Set<string>>();
+    for (const item of media) {
+        const prefix = captureTimestampPrefix(mediaTimestamp(item));
+        const applications = applicationsByPrefix.get(prefix) ?? new Set<string>();
+        applications.add(item.applicationId);
+        applicationsByPrefix.set(prefix, applications);
+    }
 
     for (const item of media) {
         if (!item.applicationId) continue;
 
         const prefix = captureTimestampPrefix(mediaTimestamp(item));
-        const existingFolder = existing.folderByTimestampPrefix.get(lower(prefix));
+        const existingFolder = existing.folderByFilename.get(lower(mediaFilename(item))) ??
+            (applicationsByPrefix.get(prefix)?.size === 1 ?
+                existing.folderByTimestampPrefix.get(lower(prefix)) : null);
         const titleId = lower(item.applicationId);
         if (existingFolder) folders.set(titleId, existingFolder);
     }
@@ -246,7 +282,8 @@ function validateMediaItemForDownload(item: Media) {
         throw new Error('Nintendo media download URL was rejected because it is not a safe public HTTPS URL');
     }
 
-    if (item.contentLength <= 0 || item.contentLength > MAX_MEDIA_DOWNLOAD_BYTES) {
+    if (!Number.isSafeInteger(item.contentLength) ||
+        item.contentLength <= 0 || item.contentLength > MAX_MEDIA_DOWNLOAD_BYTES) {
         throw new Error('Nintendo media download size is missing or exceeds the 256 MiB safety limit');
     }
 }
@@ -298,8 +335,18 @@ async function downloadMedia(item: Media, signal?: AbortSignal) {
             throw new Error('Media download exceeded the 256 MiB safety limit');
         }
 
-        const body = Buffer.from(await response.body.arrayBuffer());
+        const chunks: Buffer[] = [];
+        let size = 0;
+        for await (const chunk of response.body) {
+            signal?.throwIfAborted();
+            size += chunk.length;
+            if (size > MAX_MEDIA_DOWNLOAD_BYTES || size > item.contentLength) {
+                throw new Error('Media download exceeded its expected size or the 256 MiB safety limit');
+            }
+            chunks.push(Buffer.from(chunk));
+        }
         signal?.throwIfAborted();
+        const body = Buffer.concat(chunks, size);
 
         if (body.length !== item.contentLength) {
             throw new Error("Media download size did not match Nintendo's content length");
@@ -363,7 +410,6 @@ async function writeMediaAtomically(destination: string, body: Uint8Array, signa
     try {
         await fs.writeFile(temporary, body);
         signal?.throwIfAborted();
-        await fs.rm(destination, {force: true});
         await fs.rename(temporary, destination);
     } catch (err) {
         await fs.rm(temporary, {force: true}).catch(() => {});
@@ -421,10 +467,9 @@ export async function syncAlbum(
         const timestamp = mediaTimestamp(item);
         const prefix = captureTimestampPrefix(timestamp);
         const extension = item.type === MediaType.VIDEO ? 'mp4' : 'jpg';
-        const filename = prefix + '_c.' + extension;
+        const filename = mediaFilename(item);
 
-        if (existing.filenamesAndPrefixes.has(lower(filename)) ||
-            existing.filenamesAndPrefixes.has(lower(prefix))) {
+        if (existing.filenamesAndPrefixes.has(lower(filename))) {
             continue;
         }
 
@@ -442,6 +487,20 @@ export async function syncAlbum(
 
         await options.onDownload?.(item, destination);
         const body = await downloadMedia(item, options.signal);
+        // Older names lack an identity. Verify their bytes instead of treating
+        // every capture from the same second as the same file.
+        let legacyMatch = false;
+        for (const candidate of existing.legacyFiles.get(lower(prefix + '.' + extension)) ?? []) {
+            options.signal?.throwIfAborted();
+            const stat = await fs.stat(candidate).catch(() => null);
+            if (stat?.size !== body.length) continue;
+            const previous = await fs.readFile(candidate).catch(() => null);
+            if (previous?.equals(body)) { legacyMatch = true; break; }
+        }
+        if (legacyMatch) {
+            existing.filenamesAndPrefixes.add(lower(filename));
+            continue;
+        }
         await writeMediaAtomically(destination, body, options.signal);
         await preserveCaptureTimestamp(destination, timestamp);
 

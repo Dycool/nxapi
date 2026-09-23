@@ -387,7 +387,9 @@ async function authenticateCoralSessionToken(
 
 export async function askAddNsoAccount(app: App, iab = true) {
     try {
-        return await addNsoAccount(app, iab);
+        const result = await addNsoAccount(app, iab);
+        app.store.emit('update-nintendo-accounts');
+        return result;
     } catch (err: any) {
         if (err instanceof NintendoAccountSessionAuthorisationError && err.code === 'access_denied') return;
 

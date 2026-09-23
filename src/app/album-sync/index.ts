@@ -94,6 +94,7 @@ type TaskStatus = Pick<AlbumSyncStatus, 'state' | 'media_type' | 'error_message'
 
 export default class AlbumSyncManager {
     private settings: AlbumSyncSettings | null = null;
+    private settingsLoad: Promise<AlbumSyncSettings> | null = null;
     private timer: NodeJS.Timeout | null = null;
     private syncPromise: Promise<unknown> | null = null;
     private latestCapturePromise: Promise<string | null> | null = null;
@@ -102,6 +103,7 @@ export default class AlbumSyncManager {
     private accountToken: string | undefined;
     private stopped = false;
     private scheduleGeneration = 0;
+    private settingsUpdate: Promise<unknown> = Promise.resolve();
     private settingsWrite: Promise<unknown> = Promise.resolve();
 
     private readonly syncStatus: TaskStatus = {state: 'ready', media_type: null, error_message: null};
@@ -140,6 +142,11 @@ export default class AlbumSyncManager {
     async getSettings(): Promise<AlbumSyncSettings> {
         if (this.settings) return {...this.settings};
 
+        this.settingsLoad ??= this.loadSettings().finally(() => this.settingsLoad = null);
+        return {...await this.settingsLoad};
+    }
+
+    private async loadSettings(): Promise<AlbumSyncSettings> {
         const saved = await this.app.store.storage.getItem(SETTINGS_KEY) as
             (Partial<AlbumSyncSettings> & {last_sync?: string}) | undefined;
         const destination = saved?.destination || await defaultAlbumFolder({
@@ -173,7 +180,14 @@ export default class AlbumSyncManager {
         return {...this.settings};
     }
 
-    async setSettings(update: Partial<AlbumSyncSettings>) {
+    setSettings(update: Partial<AlbumSyncSettings>) {
+        const patch = {...update};
+        const result = this.settingsUpdate.catch(() => {}).then(() => this.applySettings(patch));
+        this.settingsUpdate = result;
+        return result;
+    }
+
+    private async applySettings(update: Partial<AlbumSyncSettings>) {
         const previous = await this.getSettings();
 
         this.settings = {
@@ -276,6 +290,16 @@ export default class AlbumSyncManager {
     }
 
     private async restartAutoSyncAfterAccountChange(force = false, background = true) {
+        const settings = await this.getSettings();
+        if (!settings.user_id) {
+            const ids = await this.app.store.storage.getItem('NintendoAccountIds') as string[] | undefined;
+            for (const id of ids ?? []) {
+                if (await this.app.store.storage.getItem('NintendoAccountToken.' + id)) {
+                    await this.setSettings({user_id: id});
+                    break;
+                }
+            }
+        }
         const token = await this.selectedAccountToken();
         const accountChanged = token !== this.accountToken;
         if (!force && !accountChanged) return;
