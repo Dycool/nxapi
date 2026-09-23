@@ -13,12 +13,22 @@ const SETTINGS_KEY = 'AlbumSyncSettings';
 const JITTER_DIVISOR = 50; // +/- 2% polling jitter
 const DEFAULT_INTERVAL_MINUTES = 60;
 
-function currentTimeText() {
-    const date = new Date();
-    const pad = (value: number) => String(value).padStart(2, '0');
+function parseLegacyLastSync(value: unknown) {
+    if (typeof value !== 'string' || !value || value === 'Never') return null;
 
-    return pad(date.getHours()) + ':' + pad(date.getMinutes()) + ' (' +
-        date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate()) + ')';
+    const match = value.match(/^(\d{2}):(\d{2}) \((\d{4})-(\d{2})-(\d{2})\)$/);
+    if (!match) return null;
+
+    const date = new Date(
+        Number(match[3]),
+        Number(match[4]) - 1,
+        Number(match[5]),
+        Number(match[1]),
+        Number(match[2]),
+    );
+
+    const timestamp = date.getTime();
+    return Number.isFinite(timestamp) ? timestamp : null;
 }
 
 function jitteredInterval(milliseconds: number) {
@@ -94,8 +104,10 @@ export default class AlbumSyncManager {
     readonly status: AlbumSyncStatus = {
         busy: false,
         copying: false,
-        status: 'Ready',
-        last_sync: 'Never',
+        state: 'ready',
+        media_type: null,
+        error_message: null,
+        last_sync_at: null,
     };
 
     constructor(readonly app: App) {}
@@ -108,7 +120,7 @@ export default class AlbumSyncManager {
         await this.app.i18n.loadNamespaces('notifications');
         const settings = await this.getSettings();
         this.accountToken = await this.selectedAccountToken();
-        this.status.last_sync = settings.last_sync || 'Never';
+        this.status.last_sync_at = settings.last_sync_at;
         this.emitState();
 
         this.app.store.on('update-nintendo-accounts', this.onAccountsUpdated);
@@ -121,7 +133,8 @@ export default class AlbumSyncManager {
     async getSettings(): Promise<AlbumSyncSettings> {
         if (this.settings) return {...this.settings};
 
-        const saved = await this.app.store.storage.getItem(SETTINGS_KEY) as Partial<AlbumSyncSettings> | undefined;
+        const saved = await this.app.store.storage.getItem(SETTINGS_KEY) as
+            (Partial<AlbumSyncSettings> & {last_sync?: string}) | undefined;
         const destination = saved?.destination || await defaultAlbumFolder(
             process.platform === 'win32' ? {
                 picturesDirectory: electronApp.getPath('pictures'),
@@ -147,7 +160,8 @@ export default class AlbumSyncManager {
             interval_minutes: Math.max(1, saved?.interval_minutes ?? DEFAULT_INTERVAL_MINUTES),
             user_id: saved?.user_id ?? defaultUserId,
             destination,
-            last_sync: saved?.last_sync || 'Never',
+            last_sync_at: typeof saved?.last_sync_at === 'number' ?
+                saved.last_sync_at : parseLegacyLastSync(saved?.last_sync),
         };
 
         await this.saveSettings();
@@ -166,7 +180,7 @@ export default class AlbumSyncManager {
         const accountChanged = previous.user_id !== this.settings.user_id;
         if (accountChanged || !this.settings.feature_enabled) this.cancelActiveWork();
         await this.saveSettings();
-        this.status.last_sync = this.settings.last_sync || 'Never';
+        this.status.last_sync_at = this.settings.last_sync_at;
         this.emitState();
 
         const featureChanged = previous.feature_enabled !== this.settings.feature_enabled;
@@ -311,7 +325,9 @@ export default class AlbumSyncManager {
 
         const run = async () => {
             this.status.busy = true;
-            this.status.status = 'Syncing album…';
+            this.status.state = 'syncing';
+            this.status.media_type = null;
+            this.status.error_message = null;
             this.emitState();
 
             const controller = this.abortController = new AbortController();
@@ -326,13 +342,15 @@ export default class AlbumSyncManager {
                 });
 
                 controller.signal.throwIfAborted();
-                const syncTime = currentTimeText();
-                this.status.last_sync = syncTime;
-                this.status.status = 'Ready';
+                const syncTime = Date.now();
+                this.status.last_sync_at = syncTime;
+                this.status.state = 'ready';
+                this.status.media_type = null;
+                this.status.error_message = null;
 
                 this.settings = {
                     ...this.settings!,
-                    last_sync: syncTime,
+                    last_sync_at: syncTime,
                 };
                 await this.saveSettings();
 
@@ -349,11 +367,15 @@ export default class AlbumSyncManager {
                 return result;
             } catch (err) {
                 if (controller.signal.aborted) {
-                    this.status.status = 'Ready';
+                    this.status.state = 'ready';
+                    this.status.media_type = null;
+                    this.status.error_message = null;
                     return null;
                 }
                 const message = err instanceof Error ? err.message : String(err);
-                this.status.status = message;
+                this.status.state = 'error';
+                this.status.media_type = null;
+                this.status.error_message = message;
                 debug('Album sync failed', err);
 
                 const settings = await this.getSettings();
@@ -379,7 +401,9 @@ export default class AlbumSyncManager {
             const controller = this.captureAbortController = new AbortController();
             this.status.copying = true;
             let mediaType: 'image' | 'video' | null = null;
-            this.status.status = 'Fetching latest upload…';
+            this.status.state = 'fetching_latest';
+            this.status.media_type = null;
+            this.status.error_message = null;
             this.emitState();
 
             try {
@@ -396,7 +420,9 @@ export default class AlbumSyncManager {
                     signal: controller.signal,
                     onDownloadStarted: type => {
                         mediaType = type;
-                        this.status.status = 'Downloading ' + type + '…';
+                        this.status.state = 'downloading';
+                        this.status.media_type = type;
+                        this.status.error_message = null;
                         this.emitState();
                         if (settings.notifications && type === 'video') {
                             const t = this.app.i18n.getFixedT(null, 'notifications');
@@ -410,8 +436,9 @@ export default class AlbumSyncManager {
                     throw new Error('Could not place the ' + mediaType + ' on the clipboard');
                 }
 
-                const label = mediaType === 'video' ? 'Video' : 'Image';
-                this.status.status = label + ' copied to clipboard';
+                this.status.state = 'copied';
+                this.status.media_type = mediaType;
+                this.status.error_message = null;
                 if (settings.notifications) {
                     const t = this.app.i18n.getFixedT(null, 'notifications');
                     this.notify(t(mediaType === 'video' ?
@@ -421,11 +448,15 @@ export default class AlbumSyncManager {
                 return filename;
             } catch (err) {
                 if (controller.signal.aborted) {
-                    this.status.status = 'Ready';
+                    this.status.state = 'ready';
+                    this.status.media_type = null;
+                    this.status.error_message = null;
                     return null;
                 }
                 const message = err instanceof Error ? err.message : String(err);
-                this.status.status = message;
+                this.status.state = 'error';
+                this.status.media_type = mediaType;
+                this.status.error_message = message;
                 debug('Copy latest capture failed', err);
 
                 const settings = await this.getSettings();

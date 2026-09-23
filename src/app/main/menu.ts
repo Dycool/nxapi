@@ -53,6 +53,16 @@ export default class MenuApp {
         const ids = await this.app.store.storage.getItem('NintendoAccountIds') as string[] | undefined;
         const album_settings = await this.app.albumSync.getSettings();
         const album_status = this.app.albumSync.status;
+        const album_status_label =
+            album_status.state === 'syncing' ? t('album_sync.status_syncing')! :
+            album_status.state === 'fetching_latest' ? t('album_sync.status_fetching_latest')! :
+            album_status.state === 'downloading' ?
+                t(album_status.media_type === 'video' ?
+                    'album_sync.status_downloading_video' : 'album_sync.status_downloading_image')! :
+            album_status.state === 'copied' ?
+                t(album_status.media_type === 'video' ?
+                    'album_sync.status_copied_video' : 'album_sync.status_copied_image')! :
+            album_status.state === 'error' ? album_status.error_message : null;
         const album_account_signed_in = !!album_settings.user_id &&
             !!ids?.includes(album_settings.user_id) &&
             !!await this.app.store.storage.getItem('NintendoAccountToken.' + album_settings.user_id);
@@ -132,10 +142,12 @@ export default class MenuApp {
             menu.append(new MenuItem({
                 label: t('album_sync.heading')!,
                 submenu: [
-                    ...(album_status.status && album_status.status !== 'Ready' ? [
-                        {label: album_status.status, enabled: false},
+                    ...(album_status_label ? [
+                        {label: album_status_label, enabled: false},
                     ] : []),
-                    {label: t('album_sync.last_sync', {last_sync: album_status.last_sync})!, enabled: false},
+                    {label: album_status.last_sync_at ?
+                        t('album_sync.last_sync', {date: new Date(album_status.last_sync_at)})! :
+                        t('album_sync.last_sync_never')!, enabled: false},
                     {type: 'separator'},
                     {
                         label: t('album_sync.sync_now')!,

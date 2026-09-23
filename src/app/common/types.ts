@@ -67,12 +67,22 @@ export interface AlbumSyncSettings {
     interval_minutes: number;
     user_id: string | null;
     destination: string;
-    last_sync: string;
+    last_sync_at: number | null;
 }
+
+export type AlbumSyncState =
+    'ready' |
+    'syncing' |
+    'fetching_latest' |
+    'downloading' |
+    'copied' |
+    'error';
 
 export interface AlbumSyncStatus {
     busy: boolean;
     copying: boolean;
-    status: string;
-    last_sync: string;
+    state: AlbumSyncState;
+    media_type: 'image' | 'video' | null;
+    error_message: string | null;
+    last_sync_at: number | null;
 }

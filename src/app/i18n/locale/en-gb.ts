@@ -37,7 +37,14 @@ export const menu_app = {
 
     album_sync: {
         heading: 'Album Sync',
-        last_sync: 'Last sync: {{last_sync}}',
+        last_sync: 'Last sync: {{date, datetime}}',
+        last_sync_never: 'Last sync: Never',
+        status_syncing: 'Syncing album…',
+        status_fetching_latest: 'Fetching latest upload…',
+        status_downloading_image: 'Downloading image…',
+        status_downloading_video: 'Downloading video…',
+        status_copied_image: 'Image copied to clipboard',
+        status_copied_video: 'Video copied to clipboard',
         sync_now: 'Sync Now',
         auto_sync_hourly: 'Auto-Sync (Hourly)',
         auto_sync_minutes_one: 'Auto-Sync (Every {{count}} min)',
