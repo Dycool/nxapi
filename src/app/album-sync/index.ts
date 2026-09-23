@@ -1,4 +1,5 @@
 import { app as electronApp, clipboard, dialog, Notification, shell } from 'electron';
+import { execFile } from 'node:child_process';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { clearTimeout, setTimeout } from 'node:timers';
@@ -37,20 +38,6 @@ function jitteredInterval(milliseconds: number) {
     return Math.max(1, nominal + Math.floor(Math.random() * (jitter * 2 + 1)) - jitter);
 }
 
-function windowsDropFilesBuffer(filename: string) {
-    const files = Buffer.from(filename + '\0\0', 'utf16le');
-    const header = Buffer.alloc(20);
-
-    // DROPFILES: DWORD pFiles, POINT pt, BOOL fNC, BOOL fWide
-    header.writeUInt32LE(20, 0);
-    header.writeInt32LE(0, 4);
-    header.writeInt32LE(0, 8);
-    header.writeInt32LE(0, 12);
-    header.writeInt32LE(1, 16);
-
-    return Buffer.concat([header, files]);
-}
-
 function macFilenamesPboardBuffer(filename: string) {
     const escaped = filename
         .replace(/&/g, '&amp;')
@@ -74,8 +61,22 @@ async function copyFileToClipboard(filename: string) {
     if (!stat?.isFile()) return false;
 
     if (process.platform === 'win32') {
-        clipboard.writeBuffer('CF_HDROP', windowsDropFilesBuffer(absolute));
-        return clipboard.availableFormats().includes('CF_HDROP');
+        const script = 'Get-Item -LiteralPath $env:NXAPI_ALBUM_SYNC_FILE | Set-Clipboard';
+        return new Promise<boolean>(resolve => {
+            execFile('powershell.exe', [
+                '-NoLogo',
+                '-NoProfile',
+                '-NonInteractive',
+                '-Command',
+                script,
+            ], {
+                windowsHide: true,
+                env: {
+                    ...process.env,
+                    NXAPI_ALBUM_SYNC_FILE: absolute,
+                },
+            }, error => resolve(!error));
+        });
     }
 
     if (process.platform === 'darwin') {
@@ -196,18 +197,16 @@ export default class AlbumSyncManager {
             void this.restartAutoSyncAfterAccountChange(true, false);
 
             if (this.settings.notifications) {
-                const t = this.app.i18n.getFixedT(null, 'notifications');
-                this.notify(this.settings.interval_minutes === 60 ?
-                    t('album_sync.auto_sync_enabled_hourly')! :
-                    t('album_sync.auto_sync_enabled_minutes', {count: this.settings.interval_minutes})!);
+                this.notifyKey(this.settings.interval_minutes === 60 ?
+                    'album_sync.auto_sync_enabled_hourly' : 'album_sync.auto_sync_enabled_minutes',
+                    {count: this.settings.interval_minutes});
             }
         } else if (scheduleChanged) {
             await this.scheduleNext();
         }
 
         if (enabledChanged && !this.settings.enabled && this.settings.notifications) {
-            const t = this.app.i18n.getFixedT(null, 'notifications');
-            this.notify(t('album_sync.auto_sync_disabled')!);
+            this.notifyKey('album_sync.auto_sync_disabled');
         }
 
         return {...this.settings};
@@ -239,10 +238,7 @@ export default class AlbumSyncManager {
     }
 
     private async hasSignedInAccount() {
-        const settings = await this.getSettings();
-        if (!settings.user_id) return false;
-
-        return !!await this.app.store.storage.getItem('NintendoAccountToken.' + settings.user_id);
+        return !!await this.selectedAccountToken();
     }
 
     private async runAutomaticSync(background: boolean) {
@@ -304,12 +300,11 @@ export default class AlbumSyncManager {
 
     private async resolveAccount() {
         const settings = await this.getSettings();
-        const storage = this.app.store.storage;
         const userId = settings.user_id;
 
         if (!userId) throw new Error('Choose a Nintendo Account for Album Sync in Preferences');
 
-        const token = await storage.getItem('NintendoAccountToken.' + userId) as string | undefined;
+        const token = await this.selectedAccountToken();
         if (!token) throw new Error('Nintendo Account is not signed in');
 
         const user = await this.app.store.users.get(token);
@@ -354,31 +349,15 @@ export default class AlbumSyncManager {
 
                 if (this.settings.notifications) {
                     if (result.newDownloads > 0) {
-                        const t = this.app.i18n.getFixedT(null, 'notifications');
-                        this.notify(t('album_sync.synced', {count: result.newDownloads})!);
+                        this.notifyKey('album_sync.synced', {count: result.newDownloads});
                     } else if (!background) {
-                        const t = this.app.i18n.getFixedT(null, 'notifications');
-                        this.notify(t('album_sync.up_to_date')!);
+                        this.notifyKey('album_sync.up_to_date');
                     }
                 }
 
                 return result;
             } catch (err) {
-                if (controller.signal.aborted) {
-                    this.status.state = 'ready';
-                    this.status.media_type = null;
-                    this.status.error_message = null;
-                    return null;
-                }
-                const message = err instanceof Error ? err.message : String(err);
-                this.status.state = 'error';
-                this.status.media_type = null;
-                this.status.error_message = message;
-                debug('Album sync failed', err);
-
-                const settings = await this.getSettings();
-                if (settings.notifications) this.notify(message);
-                throw err;
+                return await this.handleTaskError(err, controller.signal, 'Album sync failed');
             } finally {
                 this.abortController = null;
                 this.status.busy = false;
@@ -423,8 +402,7 @@ export default class AlbumSyncManager {
                         this.status.error_message = null;
                         this.emitState();
                         if (settings.notifications && type === 'video') {
-                            const t = this.app.i18n.getFixedT(null, 'notifications');
-                            this.notify(t('album_sync.downloading_video')!);
+                            this.notifyKey('album_sync.downloading_video');
                         }
                     },
                 });
@@ -438,28 +416,13 @@ export default class AlbumSyncManager {
                 this.status.media_type = mediaType;
                 this.status.error_message = null;
                 if (settings.notifications) {
-                    const t = this.app.i18n.getFixedT(null, 'notifications');
-                    this.notify(t(mediaType === 'video' ?
-                        'album_sync.video_copied' : 'album_sync.image_copied')!);
+                    this.notifyKey(mediaType === 'video' ?
+                        'album_sync.video_copied' : 'album_sync.image_copied');
                 }
 
                 return filename;
             } catch (err) {
-                if (controller.signal.aborted) {
-                    this.status.state = 'ready';
-                    this.status.media_type = null;
-                    this.status.error_message = null;
-                    return null;
-                }
-                const message = err instanceof Error ? err.message : String(err);
-                this.status.state = 'error';
-                this.status.media_type = mediaType;
-                this.status.error_message = message;
-                debug('Copy latest capture failed', err);
-
-                const settings = await this.getSettings();
-                if (settings.notifications) this.notify(message);
-                throw err;
+                return await this.handleTaskError(err, controller.signal, 'Copy latest capture failed', mediaType);
             } finally {
                 this.captureAbortController = null;
                 this.status.copying = false;
@@ -498,13 +461,43 @@ export default class AlbumSyncManager {
         this.cancelActiveWork();
         this.clearTimer();
         this.app.store.off('update-nintendo-accounts', this.onAccountsUpdated);
-        this.abortController?.abort(new Error('Sync cancelled'));
+    }
+
+    private async handleTaskError(
+        err: unknown,
+        signal: AbortSignal,
+        debugMessage: string,
+        mediaType: 'image' | 'video' | null = null,
+    ): Promise<null> {
+        if (signal.aborted) {
+            this.status.state = 'ready';
+            this.status.media_type = null;
+            this.status.error_message = null;
+            return null;
+        }
+
+        const message = err instanceof Error ? err.message : String(err);
+        this.status.state = 'error';
+        this.status.media_type = mediaType;
+        this.status.error_message = message;
+        debug(debugMessage, err);
+
+        const settings = await this.getSettings();
+        if (settings.notifications) this.notify(message);
+        throw err;
+    }
+
+    private get t() {
+        return this.app.i18n.getFixedT(null, 'notifications');
     }
 
     private notify(body: string) {
         if (!Notification.isSupported()) return;
-        const t = this.app.i18n.getFixedT(null, 'notifications');
-        new Notification({title: t('album_sync.title')!, body}).show();
+        new Notification({title: this.t('album_sync.title')!, body}).show();
+    }
+
+    private notifyKey(key: string, options?: any) {
+        this.notify((this.t as any)(key, options)!);
     }
 
     private emitState() {

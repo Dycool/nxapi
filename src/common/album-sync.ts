@@ -363,6 +363,7 @@ async function writeMediaAtomically(destination: string, body: Uint8Array, signa
     try {
         await fs.writeFile(temporary, body);
         signal?.throwIfAborted();
+        await fs.rm(destination, {force: true});
         await fs.rename(temporary, destination);
     } catch (err) {
         await fs.rm(temporary, {force: true}).catch(() => {});
@@ -476,18 +477,8 @@ export async function fetchLatestCapture(
     await fs.mkdir(options.cacheDirectory, {recursive: true});
 
     const destination = path.join(options.cacheDirectory, (isVideo ? 'video.' : 'image.') + extension);
-    const temporary = destination + '.part';
     const body = await downloadMedia(latest, options.signal);
-
-    await fs.rm(temporary, {force: true});
-    try {
-        await fs.writeFile(temporary, body);
-        await fs.rm(destination, {force: true});
-        await fs.rename(temporary, destination);
-    } catch (err) {
-        await fs.rm(temporary, {force: true}).catch(() => {});
-        throw err;
-    }
+    await writeMediaAtomically(destination, body, options.signal);
 
     await preserveCaptureTimestamp(destination, mediaTimestamp(latest));
     return destination;
