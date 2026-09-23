@@ -293,6 +293,15 @@ export const preferences_window = {
         discord_help_2: 'When using a presence URL that returns Splatoon 3 data additional presence information will be shown regardless of this setting.',
     },
 
+    album_sync: {
+        heading: 'Album Sync',
+        enable: 'Enable Album Sync',
+        nintendo_account: 'Nintendo Account',
+        no_accounts: 'No Nintendo Switch Online accounts',
+        album_folder: 'Album Folder',
+        choose_folder: 'Choose Album Folder',
+    },
+
     miscellaneous: {
         heading: 'Miscellaneous',
         show_error_alerts: 'Show error alerts',

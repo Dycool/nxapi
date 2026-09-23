@@ -329,7 +329,7 @@ function _Preferences(props: {
 
         <View style={styles.section}>
             <View style={styles.sectionLeft}>
-                <Text style={[styles.label, theme.text]}>Album Sync</Text>
+                <Text style={[styles.label, theme.text]}>{t('album_sync.heading')}</Text>
             </View>
             <View style={styles.sectionRight}>
                 <View style={styles.checkboxContainer}>
@@ -345,12 +345,12 @@ function _Preferences(props: {
                         style={styles.checkboxLabel}
                         onPress={() => setAlbumSyncEnabled(!album_sync_settings.feature_enabled)}
                     >
-                        <Text style={[styles.checkboxLabelText, theme.text]}>Enable Album Sync</Text>
+                        <Text style={[styles.checkboxLabelText, theme.text]}>{t('album_sync.enable')}</Text>
                     </TouchableOpacity>
                 </View>
 
                 <View style={!album_sync_settings.feature_enabled ? styles.disabled : null}>
-                    <Text style={[styles.header, theme.text]}>Nintendo Account</Text>
+                    <Text style={[styles.header, theme.text]}>{t('album_sync.nintendo_account')}</Text>
                     <Picker<string>
                         selectedValue={album_sync_settings.user_id ?? ''}
                         onValueChange={setAlbumSyncUser}
@@ -359,7 +359,7 @@ function _Preferences(props: {
                             album_sync_settings_state !== RequestState.LOADING}
                     >
                         {!users.some(user => !!user.nso) ?
-                            <Picker.Item key="" label="No Nintendo Switch Online accounts" value="" /> :
+                            <Picker.Item key="" label={t('album_sync.no_accounts')!} value="" /> :
                             users.filter(user => !!user.nso).map(user =>
                                 <Picker.Item
                                     key={user.user.id}
@@ -373,10 +373,10 @@ function _Preferences(props: {
                     </Picker>
                 </View>
                 <View>
-                    <Text style={[styles.header, theme.text]}>Album Folder</Text>
+                    <Text style={[styles.header, theme.text]}>{t('album_sync.album_folder')}</Text>
                     <Text selectable style={[styles.help, theme.text]}>{album_sync_settings.destination}</Text>
                     <View style={styles.button}>
-                        <Button title="Choose Album Folder"
+                        <Button title={t('album_sync.choose_folder')}
                             onPress={chooseAlbumFolder}
                             color={'#' + (accent_colour ?? DEFAULT_ACCENT_COLOUR)} />
                     </View>
