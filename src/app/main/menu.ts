@@ -146,7 +146,10 @@ export default class MenuApp {
                         {label: album_status_label, enabled: false},
                     ] : []),
                     {label: album_status.last_sync_at ?
-                        t('album_sync.last_sync', {date: new Date(album_status.last_sync_at)})! :
+                        t('album_sync.last_sync', {
+                            date: new Date(album_status.last_sync_at),
+                            formatParams: {date: {dateStyle: 'short', timeStyle: 'short'}},
+                        })! :
                         t('album_sync.last_sync_never')!, enabled: false},
                     {type: 'separator'},
                     {

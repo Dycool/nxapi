@@ -90,6 +90,8 @@ async function copyFileToClipboard(filename: string) {
     return clipboard.availableFormats().some(format => format.toLowerCase() === 'text/uri-list');
 }
 
+type TaskStatus = Pick<AlbumSyncStatus, 'state' | 'media_type' | 'error_message'>;
+
 export default class AlbumSyncManager {
     private settings: AlbumSyncSettings | null = null;
     private timer: NodeJS.Timeout | null = null;
@@ -101,6 +103,10 @@ export default class AlbumSyncManager {
     private stopped = false;
     private scheduleGeneration = 0;
     private settingsWrite: Promise<unknown> = Promise.resolve();
+
+    private readonly syncStatus: TaskStatus = {state: 'ready', media_type: null, error_message: null};
+    private readonly copyStatus: TaskStatus = {state: 'ready', media_type: null, error_message: null};
+    private lastTaskStatus: TaskStatus = this.syncStatus;
 
     readonly status: AlbumSyncStatus = {
         busy: false,
@@ -318,9 +324,9 @@ export default class AlbumSyncManager {
 
         const run = async () => {
             this.status.busy = true;
-            this.status.state = 'syncing';
-            this.status.media_type = null;
-            this.status.error_message = null;
+            this.syncStatus.state = 'syncing';
+            this.syncStatus.media_type = null;
+            this.syncStatus.error_message = null;
             this.emitState();
 
             const controller = this.abortController = new AbortController();
@@ -337,9 +343,9 @@ export default class AlbumSyncManager {
                 controller.signal.throwIfAborted();
                 const syncTime = Date.now();
                 this.status.last_sync_at = syncTime;
-                this.status.state = 'ready';
-                this.status.media_type = null;
-                this.status.error_message = null;
+                this.syncStatus.state = 'ready';
+                this.syncStatus.media_type = null;
+                this.syncStatus.error_message = null;
 
                 this.settings = {
                     ...this.settings!,
@@ -357,10 +363,11 @@ export default class AlbumSyncManager {
 
                 return result;
             } catch (err) {
-                return await this.handleTaskError(err, controller.signal, 'Album sync failed');
+                return await this.handleTaskError(this.syncStatus, err, controller.signal, 'Album sync failed');
             } finally {
                 this.abortController = null;
                 this.status.busy = false;
+                this.lastTaskStatus = this.syncStatus;
                 this.emitState();
             }
         };
@@ -378,9 +385,9 @@ export default class AlbumSyncManager {
             const controller = this.captureAbortController = new AbortController();
             this.status.copying = true;
             let mediaType: 'image' | 'video' | null = null;
-            this.status.state = 'fetching_latest';
-            this.status.media_type = null;
-            this.status.error_message = null;
+            this.copyStatus.state = 'fetching_latest';
+            this.copyStatus.media_type = null;
+            this.copyStatus.error_message = null;
             this.emitState();
 
             try {
@@ -397,9 +404,9 @@ export default class AlbumSyncManager {
                     signal: controller.signal,
                     onDownloadStarted: type => {
                         mediaType = type;
-                        this.status.state = 'downloading';
-                        this.status.media_type = type;
-                        this.status.error_message = null;
+                        this.copyStatus.state = 'downloading';
+                        this.copyStatus.media_type = type;
+                        this.copyStatus.error_message = null;
                         this.emitState();
                         if (settings.notifications && type === 'video') {
                             this.notifyKey('album_sync.downloading_video');
@@ -412,9 +419,9 @@ export default class AlbumSyncManager {
                     throw new Error('Could not place the ' + mediaType + ' on the clipboard');
                 }
 
-                this.status.state = 'copied';
-                this.status.media_type = mediaType;
-                this.status.error_message = null;
+                this.copyStatus.state = 'copied';
+                this.copyStatus.media_type = mediaType;
+                this.copyStatus.error_message = null;
                 if (settings.notifications) {
                     this.notifyKey(mediaType === 'video' ?
                         'album_sync.video_copied' : 'album_sync.image_copied');
@@ -422,10 +429,11 @@ export default class AlbumSyncManager {
 
                 return filename;
             } catch (err) {
-                return await this.handleTaskError(err, controller.signal, 'Copy latest capture failed', mediaType);
+                return await this.handleTaskError(this.copyStatus, err, controller.signal, 'Copy latest capture failed', mediaType);
             } finally {
                 this.captureAbortController = null;
                 this.status.copying = false;
+                this.lastTaskStatus = this.copyStatus;
                 this.emitState();
             }
         };
@@ -464,22 +472,23 @@ export default class AlbumSyncManager {
     }
 
     private async handleTaskError(
+        taskStatus: TaskStatus,
         err: unknown,
         signal: AbortSignal,
         debugMessage: string,
         mediaType: 'image' | 'video' | null = null,
     ): Promise<null> {
         if (signal.aborted) {
-            this.status.state = 'ready';
-            this.status.media_type = null;
-            this.status.error_message = null;
+            taskStatus.state = 'ready';
+            taskStatus.media_type = null;
+            taskStatus.error_message = null;
             return null;
         }
 
         const message = err instanceof Error ? err.message : String(err);
-        this.status.state = 'error';
-        this.status.media_type = mediaType;
-        this.status.error_message = message;
+        taskStatus.state = 'error';
+        taskStatus.media_type = mediaType;
+        taskStatus.error_message = message;
         debug(debugMessage, err);
 
         const settings = await this.getSettings();
@@ -501,6 +510,11 @@ export default class AlbumSyncManager {
     }
 
     private emitState() {
+        const display = this.status.copying ? this.copyStatus :
+            this.status.busy ? this.syncStatus :
+            this.copyStatus.state === 'error' ? this.copyStatus :
+            this.syncStatus.state === 'error' ? this.syncStatus : this.lastTaskStatus;
+        Object.assign(this.status, display);
         const state = {...this.status};
         this.app.store.emit('update-album-sync', state);
     }
