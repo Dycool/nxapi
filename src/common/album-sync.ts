@@ -5,7 +5,7 @@ import { execFile } from 'node:child_process';
 import { isIP } from 'node:net';
 import { request, type Dispatcher } from 'undici';
 import type { CoralApiInterface } from '../api/coral.js';
-import type { Media } from '../api/coral-types.js';
+import { MediaType, type Media } from '../api/coral-types.js';
 
 const MAX_MEDIA_DOWNLOAD_BYTES = 256 * 1024 * 1024;
 const HTTPS_PREFIX = 'https://';
@@ -43,13 +43,6 @@ function lower(value: string) {
     return value.toLowerCase();
 }
 
-function throwIfCancelled(signal?: AbortSignal) {
-    if (!signal?.aborted) return;
-
-    if (signal.reason instanceof Error) throw signal.reason;
-    throw new Error('Sync cancelled');
-}
-
 export function normalizeAlbumTitleV1(value: string) {
     return value
         .normalize('NFKD')
@@ -69,22 +62,6 @@ export function sanitizeAlbumFolderV1(value: string) {
         .replace(/[ .]+$/u, '');
 
     return result || 'Other';
-}
-
-// Keep legacy API compatibility local to Album Sync rather than changing Coral.
-export function normalizeAlbumMedia(media: unknown): Media[] {
-    if (!Array.isArray(media)) return [];
-    return media.map(item => ({
-        ...item,
-        applicationId: typeof item.titleId === 'string' ? item.titleId :
-            typeof item.applicationId === 'string' ? item.applicationId : '',
-        appName: typeof item.appName === 'string' ? item.appName : 'Nintendo Switch',
-        type: typeof item.type === 'string' ? item.type : 'image',
-        capturedAt: Number.isInteger(item.capturedAt) ? item.capturedAt : 0,
-        uploadedAt: Number.isInteger(item.uploadedAt) ? item.uploadedAt : 0,
-        contentUri: typeof item.contentUri === 'string' ? item.contentUri : '',
-        contentLength: Number.isInteger(item.contentLength) ? item.contentLength : 0,
-    }));
 }
 
 function mediaTimestamp(item: Media) {
@@ -118,7 +95,7 @@ function prefixFromExistingFilename(filename: string) {
 }
 
 async function* walkFiles(root: string, signal?: AbortSignal): AsyncGenerator<string> {
-    throwIfCancelled(signal);
+    signal?.throwIfAborted();
 
     let directory;
     try {
@@ -130,7 +107,7 @@ async function* walkFiles(root: string, signal?: AbortSignal): AsyncGenerator<st
     }
 
     for await (const entry of directory) {
-        throwIfCancelled(signal);
+        signal?.throwIfAborted();
         const filename = path.join(root, entry.name);
 
         if (entry.isDirectory()) {
@@ -280,7 +257,7 @@ async function requestMedia(item: Media, signal?: AbortSignal): Promise<Dispatch
     let currentUrl = item.contentUri;
 
     for (let redirects = 0; redirects <= 5; redirects++) {
-        throwIfCancelled(signal);
+        signal?.throwIfAborted();
 
         const response = await request(currentUrl, {
             maxRedirections: 0,
@@ -322,7 +299,7 @@ async function downloadMedia(item: Media, signal?: AbortSignal) {
         }
 
         const body = Buffer.from(await response.body.arrayBuffer());
-        throwIfCancelled(signal);
+        signal?.throwIfAborted();
 
         if (body.length !== item.contentLength) {
             throw new Error("Media download size did not match Nintendo's content length");
@@ -385,7 +362,7 @@ async function writeMediaAtomically(destination: string, body: Uint8Array, signa
 
     try {
         await fs.writeFile(temporary, body);
-        throwIfCancelled(signal);
+        signal?.throwIfAborted();
         await fs.rename(temporary, destination);
     } catch (err) {
         await fs.rm(temporary, {force: true}).catch(() => {});
@@ -424,11 +401,10 @@ export async function syncAlbum(
     nso: CoralApiInterface,
     options: AlbumSyncOptions = {},
 ): Promise<AlbumSyncResult> {
-    throwIfCancelled(options.signal);
+    options.signal?.throwIfAborted();
 
-    const response = await nso.getMedia();
-    const media = normalizeAlbumMedia(response.media);
-    throwIfCancelled(options.signal);
+    const {media} = await nso.getMedia();
+    options.signal?.throwIfAborted();
 
     const root = options.destination ?? await defaultAlbumFolder(options.locations);
     await fs.mkdir(root, {recursive: true});
@@ -439,11 +415,11 @@ export async function syncAlbum(
     let downloaded = 0;
 
     for (const item of media) {
-        throwIfCancelled(options.signal);
+        options.signal?.throwIfAborted();
 
         const timestamp = mediaTimestamp(item);
         const prefix = captureTimestampPrefix(timestamp);
-        const extension = lower(item.type) === 'video' ? 'mp4' : 'jpg';
+        const extension = item.type === MediaType.VIDEO ? 'mp4' : 'jpg';
         const filename = prefix + '_c.' + extension;
 
         if (existing.filenamesAndPrefixes.has(lower(filename)) ||
@@ -483,10 +459,9 @@ export async function fetchLatestCapture(
     nso: CoralApiInterface,
     options: LatestCaptureOptions,
 ) {
-    throwIfCancelled(options.signal);
+    options.signal?.throwIfAborted();
 
-    const response = await nso.getMedia();
-    const media = normalizeAlbumMedia(response.media);
+    const {media} = await nso.getMedia();
     if (!media.length) throw new Error('No captures are currently available from Nintendo');
 
     const latest = media.reduce((left, right) =>
@@ -494,7 +469,7 @@ export async function fetchLatestCapture(
 
     validateMediaItemForDownload(latest);
 
-    const isVideo = lower(latest.type) === 'video';
+    const isVideo = latest.type === MediaType.VIDEO;
     await options.onDownloadStarted?.(isVideo ? 'video' : 'image');
 
     const extension = isVideo ? 'mp4' : 'jpg';
